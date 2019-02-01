@@ -22,8 +22,9 @@ complete -o nospace -F _ttx ttr
 
 tt ()
 {
-    [[ "$1" =~ ^-?-h(elp)?$ ]] && { tth; return 0; }
     test -z "$1" && { cd ~; return 0; }
+    [[ "$1" =~ ^-?-h(elp)?$ ]] && { tth; return 0; }
+    [[ "$1" == '-' ]] && { cd -; return 0; }
     test -s "$TRAVEL_LIST_PATH" && source "$TRAVEL_LIST_PATH" || declare -A TRAVEL_LIST
 
     if test -n "${TRAVEL_LIST[$1]}"; then
