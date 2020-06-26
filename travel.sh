@@ -3,8 +3,8 @@ shopt -s extglob
 
 _tt ()
 {
-    test -s "$TRAVEL_LIST_PATH" && source "$TRAVEL_LIST_PATH" || declare -A TRAVEL_LIST
-    if test -n "${TRAVEL_LIST[${COMP_WORDS[$COMP_CWORD]:-_}]}"; then
+    [[ -s "$TRAVEL_LIST_PATH" ]] && source "$TRAVEL_LIST_PATH" || declare -A TRAVEL_LIST
+    if [[ -n "${TRAVEL_LIST[${COMP_WORDS[$COMP_CWORD]:-_}]}" ]]; then
         COMPREPLY=( "${TRAVEL_LIST[${COMP_WORDS[$COMP_CWORD]}]}/" )
     elif [[ " ${!TRAVEL_LIST[@]}" =~ " ${COMP_WORDS[$COMP_CWORD]}" ]]; then
         COMPREPLY=( $(compgen -W "${!TRAVEL_LIST[*]}" "${COMP_WORDS[$COMP_CWORD]}" ) )
@@ -14,7 +14,7 @@ complete -o nospace -o dirnames -F _tt tt
 
 _ttx ()
 {
-    test -s "$TRAVEL_LIST_PATH" && source "$TRAVEL_LIST_PATH" || declare -A TRAVEL_LIST
+    [[ -s "$TRAVEL_LIST_PATH" ]] && source "$TRAVEL_LIST_PATH" || declare -A TRAVEL_LIST
     COMPREPLY=( $( compgen -W "${!TRAVEL_LIST[*]}" "${COMP_WORDS[$COMP_CWORD]}" ) )
 }
 complete -o nospace -F _ttx ttd
@@ -22,14 +22,14 @@ complete -o nospace -F _ttx ttr
 
 tt ()
 {
-    test -z "$1" && { cd ~; return 0; }
+    [[ -z "$1" ]] && { cd ~; return 0; }
     [[ "$1" =~ ^-?-h(elp)?$ ]] && { tth; return 0; }
-    [[ "$1" == '-' ]] && { cd -; return 0; }
-    test -s "$TRAVEL_LIST_PATH" && source "$TRAVEL_LIST_PATH" || declare -A TRAVEL_LIST
+    [[ "$1" == "-" ]] && { cd -; return 0; }
+    [[ -s "$TRAVEL_LIST_PATH" ]] && source "$TRAVEL_LIST_PATH" || declare -A TRAVEL_LIST
 
-    if test -n "${TRAVEL_LIST[$1]}"; then
+    if [[ -n "${TRAVEL_LIST[$1]}" ]]; then
         cd "${TRAVEL_LIST[$1]}"
-    elif test -d "$1"; then
+    elif [[ -d "$1" ]]; then
         cd "$1"
     else
         printf '%s\n' "'$1' is neither an alias nor a directory" >&2
@@ -39,30 +39,52 @@ tt ()
 
 tta ()
 {
-    test -n "$1" || { printf '%s\n' "tta requires at least one parameter" >&2; return 1; }
-    test -d "$1" || { printf '%s\n' "Path '$1' is not a directory" >&2; return 1; }
-    [[ "$1" == '/' ]] && { printf '%s\n' "Path cannot be /" >&2; return 1; }
-    [[ "${1:0:1}" =~ ~|/ ]] || { printf '%s\n' "Path cannot be relative" >&2; return 1; }
+    [[ -n "$1" ]] || { printf '%s\n' "tta requires at least one parameter" >&2; return 1; }
 
-    local _alias _path=${1%%+(/)}
-    _alias="${2:-$_path}"
-    _alias="${_alias##*/}"
+    local -- alias=
+    local -- path=${1//+(\/)/\/} # Remove duplicate slashes
 
-    test -s "$TRAVEL_LIST_PATH" && source "$TRAVEL_LIST_PATH" || declare -A TRAVEL_LIST
-    test -z "${TRAVEL_LIST[$_alias]}" || { printf '%s\n' "Alias '$_alias' is already set" >&2; return 1; }
+    [[ "${path:0:1}" == "~" ]] && path="${HOME}${path#~}" # Replace leading tilde with $HOME
 
-    TRAVEL_LIST["$_alias"]="${_path/~/$HOME}"
+    if [[ "${path:0:1}" != "/" ]]; then
+        path="${PWD%\/}/${path#.\/}" # Add current directory to path if no leading slash
+    fi
+
+    local -- collapsed=
+    while [[ "$path" =~ /\.\. ]]; do # Path contains \..
+        collapsed="$(sed -r 's/[^./]+\/\.\.\/?//g' <<< "$path")" # Remove elements with a trailing \..\?
+        [[ "$collapsed" == "$path" ]] && break
+        path="$collapsed"
+    done
+    path="${path/+(\/..)/}" # Remove any occurances of /..
+    path="${path%/}" # Remove trailing slash
+    path="/${path##/}" # Remove leading slashes
+    
+    [[ "$path" == "/" ]] && { printf '%s\n' "Path cannot be '/'" >&2; return 1; }
+    [[ -d "$path" ]] || { printf '%s\n' "Path '$path' is not a directory" >&2; return 1; }
+
+    alias="${2:-$path}" # Set alias to second param, or path if unset
+    alias="${alias##*/}" # Remove everything before and including the last slash
+    alias="${alias,,}" # Change to lowercase
+    alias="${alias//[^a-z0-9_-]/}" # Remove non-word characters
+
+    [[ -z "$alias" ]] && { printf '%s\n' "Alias '$2' is invalid" >&2; return 1; }
+    [[ -s "$TRAVEL_LIST_PATH" ]] && source "$TRAVEL_LIST_PATH" || declare -A TRAVEL_LIST
+    [[ -z "${TRAVEL_LIST[$alias]}" ]] || { printf '%s\n' "Alias '$alias' is already set" >&2; return 1; }
+
+    TRAVEL_LIST["$alias"]="$path"
     declare -p TRAVEL_LIST > "$TRAVEL_LIST_PATH"
 }
 
 ttd ()
 {
-    test -n "$1" || { printf '%s\n' "ttd requires at least one parameter" >&2; return 1; }
-    test -s "$TRAVEL_LIST_PATH" && source "$TRAVEL_LIST_PATH" || declare -A TRAVEL_LIST
+    [[ -n "$1" ]] || { printf '%s\n' "ttd requires at least one parameter" >&2; return 1; }
+    [[ -s "$TRAVEL_LIST_PATH" ]] && source "$TRAVEL_LIST_PATH" || declare -A TRAVEL_LIST
 
-    local _alias
-    for _alias in "$@"; do
-        test -n "${TRAVEL_LIST[$_alias]}" && unset TRAVEL_LIST["$_alias"]
+    local -- alias=
+
+    for alias in "$@"; do
+        [[ -n "${TRAVEL_LIST[$alias]}" ]] && unset TRAVEL_LIST["$alias"]
     done
 
     declare -p TRAVEL_LIST > "$TRAVEL_LIST_PATH"
@@ -100,22 +122,28 @@ ____HELP
 
 ttl ()
 {
-    test -s "$TRAVEL_LIST_PATH" && source "$TRAVEL_LIST_PATH" || declare -A TRAVEL_LIST
+    [[ -s "$TRAVEL_LIST_PATH" ]] && source "$TRAVEL_LIST_PATH" || declare -A TRAVEL_LIST
 
-    local _alias
-    for _alias in "${!TRAVEL_LIST[@]}"; do
-        printf '%-16s= %s\n' "[$_alias]" "${TRAVEL_LIST[$_alias]}"
-    done
+    local -- alias=
+    for alias in "${!TRAVEL_LIST[@]}"; do
+        printf '%-16s= %s\n' "[$alias]" "${TRAVEL_LIST[$alias]}"
+    done | sort
 }
 
 ttr ()
 {
-    test -z "$1" -o -z "$2" && { printf '%s\n' "ttr requires two parameters" >&2; return 1; }
-    test -s "$TRAVEL_LIST_PATH" && source "$TRAVEL_LIST_PATH" || declare -A TRAVEL_LIST
-    test -z "${TRAVEL_LIST[$1]}" && { printf '%s\n' "Alias '$1' is not set" >&2; return 1; }
-    test -n "${TRAVEL_LIST[$2]}" && { printf '%s\n' "Alias '$2' is already set" >&2; return 1; }
+    [[ -z "$1" || -z "$2" ]] && { printf '%s\n' "ttr requires two parameters" >&2; return 1; }
+    [[ -s "$TRAVEL_LIST_PATH" ]] && source "$TRAVEL_LIST_PATH" || declare -A TRAVEL_LIST
+    [[ -z "${TRAVEL_LIST[$1]}" ]] && { printf '%s\n' "Alias '$1' is not set" >&2; return 1; }
 
-    TRAVEL_LIST["$2"]="${TRAVEL_LIST[$1]}"
+    local -- alias="${2##*/}"
+    alias="${alias,,}"
+    alias="${alias//[^a-z0-9_-]/}"
+
+    [[ -z "$alias" ]] && { printf '%s\n' "Alias '$2' is invalid" >&2; return 1; }
+    [[ -n "${TRAVEL_LIST[$alias]}" ]] && { printf '%s\n' "Alias '$alias' is already set" >&2; return 1; }
+
+    TRAVEL_LIST["$alias"]="${TRAVEL_LIST[$1]}"
     unset TRAVEL_LIST["$1"]
 
     declare -p TRAVEL_LIST > "$TRAVEL_LIST_PATH"
